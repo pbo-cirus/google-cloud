@@ -17,7 +17,9 @@
 package io.cdap.plugin.gcp.gcs.sink;
 
 import com.google.auth.Credentials;
+import com.google.cloud.storage.Bucket;
 import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.StorageException;
 import com.google.common.base.Strings;
 import io.cdap.cdap.api.annotation.Description;
 import io.cdap.cdap.api.annotation.Macro;
@@ -69,7 +71,17 @@ public class GCSBatchSink extends AbstractFileSink<GCSBatchSink.GCSBatchSinkConf
     Credentials credentials = config.getServiceAccountFilePath() == null ?
                                 null : GCPUtils.loadServiceAccountCredentials(config.getServiceAccountFilePath());
     Storage storage = GCPUtils.getStorage(config.getProject(), credentials);
-    if (storage.get(config.getBucket()) == null) {
+    Bucket bucket;
+    try {
+      bucket = storage.get(config.getBucket());
+    } catch (StorageException e) {
+      RuntimeException re = new RuntimeException(
+        String.format("Unable to access or create bucket at path %s. ", config.getBucket())
+          + "Ensure you entered the correct bucket path.");
+      re.initCause(e);
+      throw re;
+    }
+    if (bucket == null) {
       GCPUtils.createBucket(storage, config.getBucket(), config.getLocation(), cmekKey);
     }
   }
@@ -144,8 +156,20 @@ public class GCSBatchSink extends AbstractFileSink<GCSBatchSink.GCSBatchSinkConf
       if (!containsMacro(NAME_PATH)) {
         try {
           GCSPath.from(path);
+          // Check if bucket exists and is accessible
+          Credentials credentials = getServiceAccountFilePath() == null ?
+            null : GCPUtils.loadServiceAccountCredentials(getServiceAccountFilePath());
+          Storage storage = GCPUtils.getStorage(getProject(), credentials);
+          Bucket bucket = storage.get(getBucket());
         } catch (IllegalArgumentException e) {
           collector.addFailure(e.getMessage(), null).withConfigProperty(NAME_PATH).withStacktrace(e.getStackTrace());
+        } catch (IOException e) {
+          collector.addFailure(e.getMessage(), null).withConfigProperty(NAME_SERVICE_ACCOUNT_FILE_PATH)
+            .withStacktrace(e.getStackTrace());
+        } catch (StorageException e) {
+          collector.addFailure(e.getMessage(), "Ensure you entered the correct bucket path.")
+            .withConfigProperty(NAME_PATH)
+            .withStacktrace(e.getStackTrace());
         }
       }
       if (suffix != null && !containsMacro(NAME_SUFFIX)) {

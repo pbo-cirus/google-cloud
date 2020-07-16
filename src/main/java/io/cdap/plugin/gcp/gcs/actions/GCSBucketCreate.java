@@ -18,6 +18,7 @@ package io.cdap.plugin.gcp.gcs.actions;
 
 import com.google.auth.Credentials;
 import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.StorageException;
 import io.cdap.cdap.api.annotation.Description;
 import io.cdap.cdap.api.annotation.Macro;
 import io.cdap.cdap.api.annotation.Name;
@@ -192,11 +193,29 @@ public final class GCSBucketCreate extends Action {
 
     void validate(FailureCollector collector) {
       if (!containsMacro("paths")) {
+        Storage storage = null;
+        try {
+          Credentials credentials = getServiceAccountFilePath() == null ?
+            null : GCPUtils.loadServiceAccountCredentials(getServiceAccountFilePath());
+          storage = GCPUtils.getStorage(getProject(), credentials);
+        } catch (IOException e) {
+          collector.addFailure(e.getMessage(), "Ensure you entered the correct file path.")
+            .withConfigProperty(NAME_SERVICE_ACCOUNT_FILE_PATH)
+            .withStacktrace(e.getStackTrace());
+        }
         for (String path : getPaths()) {
           try {
-            GCSPath.from(path);
+            GCSPath gcsPath = GCSPath.from(path);
+            // Check if bucket exists and is accessible
+            if (storage != null) {
+              storage.get(gcsPath.getBucket());
+            }
           } catch (IllegalArgumentException e) {
             collector.addFailure(e.getMessage(), null).withConfigElement(NAME_PATHS, path);
+          } catch (StorageException e) {
+            collector.addFailure(e.getMessage(), "Ensure you entered the correct bucket path.")
+              .withConfigElement(NAME_PATHS, path)
+              .withStacktrace(e.getStackTrace());
           }
         }
         collector.getOrThrowException();

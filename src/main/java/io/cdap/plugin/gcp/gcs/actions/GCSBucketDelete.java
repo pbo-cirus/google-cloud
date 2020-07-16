@@ -16,6 +16,10 @@
 
 package io.cdap.plugin.gcp.gcs.actions;
 
+import com.google.auth.Credentials;
+import com.google.cloud.storage.Bucket;
+import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.StorageException;
 import io.cdap.cdap.api.annotation.Description;
 import io.cdap.cdap.api.annotation.Macro;
 import io.cdap.cdap.api.annotation.Name;
@@ -25,6 +29,7 @@ import io.cdap.cdap.etl.api.PipelineConfigurer;
 import io.cdap.cdap.etl.api.action.Action;
 import io.cdap.cdap.etl.api.action.ActionContext;
 import io.cdap.plugin.gcp.common.GCPConfig;
+import io.cdap.plugin.gcp.common.GCPUtils;
 import io.cdap.plugin.gcp.gcs.GCSPath;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -117,11 +122,34 @@ public final class GCSBucketDelete extends Action {
 
     void validate(FailureCollector collector) {
       if (!containsMacro(NAME_PATHS)) {
+        Storage storage = null;
+        try {
+          Credentials credentials = getServiceAccountFilePath() == null ?
+            null : GCPUtils.loadServiceAccountCredentials(getServiceAccountFilePath());
+          storage = GCPUtils.getStorage(getProject(), credentials);
+        } catch (IOException e) {
+          collector.addFailure(e.getMessage(), "Ensure you entered the correct file path.")
+            .withConfigProperty(NAME_SERVICE_ACCOUNT_FILE_PATH)
+            .withStacktrace(e.getStackTrace());
+        }
         for (String path : getPaths()) {
           try {
-            GCSPath.from(path);
+            GCSPath gcsPath = GCSPath.from(path);
+            // Check if bucket exists and is accessible
+            if (storage != null) {
+              Bucket bucket = storage.get(gcsPath.getBucket());
+              if (bucket == null) {
+                collector.addFailure("Bucket does not exist.",
+                                     "Ensure you entered the correct bucket path.")
+                  .withConfigElement(NAME_PATHS, path);
+              }
+            }
           } catch (IllegalArgumentException e) {
             collector.addFailure(e.getMessage(), null).withConfigElement(NAME_PATHS, path);
+          } catch (StorageException e) {
+            collector.addFailure(e.getMessage(), "Ensure you entered the correct bucket path.")
+              .withConfigElement(NAME_PATHS, path)
+              .withStacktrace(e.getStackTrace());
           }
         }
         collector.getOrThrowException();

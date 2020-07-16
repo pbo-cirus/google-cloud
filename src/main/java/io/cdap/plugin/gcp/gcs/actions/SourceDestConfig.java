@@ -16,13 +16,19 @@
 
 package io.cdap.plugin.gcp.gcs.actions;
 
+import com.google.auth.Credentials;
+import com.google.cloud.storage.Bucket;
+import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.StorageException;
 import io.cdap.cdap.api.annotation.Description;
 import io.cdap.cdap.api.annotation.Macro;
 import io.cdap.cdap.api.annotation.Name;
 import io.cdap.cdap.etl.api.FailureCollector;
 import io.cdap.plugin.gcp.common.GCPConfig;
+import io.cdap.plugin.gcp.common.GCPUtils;
 import io.cdap.plugin.gcp.gcs.GCSPath;
 
+import java.io.IOException;
 import javax.annotation.Nullable;
 
 /**
@@ -67,16 +73,53 @@ public class SourceDestConfig extends GCPConfig {
   public void validate(FailureCollector collector) {
     if (!containsMacro("sourcePath")) {
       try {
-        getSourcePath();
+        GCSPath gcsSourcePath = getSourcePath();
+        // Check if bucket exists and is accessible
+        Credentials credentials = getServiceAccountFilePath() == null ?
+          null : GCPUtils.loadServiceAccountCredentials(getServiceAccountFilePath());
+        Storage storage = GCPUtils.getStorage(getProject(), credentials);
+        Bucket bucket = storage.get(gcsSourcePath.getBucket());
+        if (bucket == null) {
+          collector.addFailure("Bucket does not exist.",
+                               "Ensure you entered the correct bucket path.")
+            .withConfigProperty(NAME_SOURCE_PATH);
+        }
       } catch (IllegalArgumentException e) {
         collector.addFailure(e.getMessage(), null).withConfigProperty(NAME_SOURCE_PATH);
+      } catch (IOException e) {
+        collector.addFailure(e.getMessage(), "Ensure you entered the correct file path.")
+          .withConfigProperty(NAME_SERVICE_ACCOUNT_FILE_PATH)
+          .withStacktrace(e.getStackTrace());
+      } catch (StorageException e) {
+        collector.addFailure(e.getMessage(), "Ensure you entered the correct bucket path.")
+          .withConfigProperty(NAME_SOURCE_PATH)
+          .withStacktrace(e.getStackTrace());
       }
     }
     if (!containsMacro("destPath")) {
       try {
-        getDestPath();
+        GCSPath gcsDestPath = getDestPath();
+        // Check if bucket exists and is accessible
+        Credentials credentials = getServiceAccountFilePath() == null ?
+          null : GCPUtils.loadServiceAccountCredentials(getServiceAccountFilePath());
+        Storage storage = GCPUtils.getStorage(getProject(), credentials);
+        Bucket bucket = storage.get(gcsDestPath.getBucket());
+        if (bucket == null) {
+          collector.addFailure("Bucket does not exist.",
+                               "Please create the bucket or ensure you entered the correct bucket path.")
+            .withConfigProperty(NAME_DEST_PATH);
+        }
       } catch (IllegalArgumentException e) {
         collector.addFailure(e.getMessage(), null).withConfigProperty(NAME_DEST_PATH);
+      } catch (IOException e) {
+        collector.addFailure(e.getMessage(), "Ensure you entered the correct file path.")
+          .withConfigProperty(NAME_SERVICE_ACCOUNT_FILE_PATH)
+          .withStacktrace(e.getStackTrace());
+      } catch (StorageException e) {
+        collector.addFailure(e.getMessage(),
+                             "Please create the bucket or ensure you entered the correct bucket path.")
+          .withConfigProperty(NAME_DEST_PATH)
+          .withStacktrace(e.getStackTrace());
       }
     }
     collector.getOrThrowException();

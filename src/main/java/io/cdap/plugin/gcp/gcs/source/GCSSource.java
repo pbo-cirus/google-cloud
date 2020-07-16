@@ -16,6 +16,10 @@
 
 package io.cdap.plugin.gcp.gcs.source;
 
+import com.google.auth.Credentials;
+import com.google.cloud.storage.Bucket;
+import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.StorageException;
 import com.google.common.base.Strings;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -38,6 +42,7 @@ import io.cdap.plugin.gcp.common.GCPUtils;
 import io.cdap.plugin.gcp.crypto.EncryptedFileSystem;
 import io.cdap.plugin.gcp.gcs.GCSPath;
 
+import java.io.IOException;
 import java.lang.reflect.Type;
 import java.util.Collections;
 import java.util.HashMap;
@@ -197,9 +202,27 @@ public class GCSSource extends AbstractFileSource<GCSSource.GCSSourceConfig> {
       // validate that path is valid
       if (!containsMacro(NAME_PATH)) {
         try {
-          GCSPath.from(path);
+          GCSPath gcsPath = GCSPath.from(path);
+          // Check if bucket exists and is accessible
+          Credentials credentials = getServiceAccountFilePath() == null ?
+            null : GCPUtils.loadServiceAccountCredentials(getServiceAccountFilePath());
+          Storage storage = GCPUtils.getStorage(getProject(), credentials);
+          Bucket bucket = storage.get(gcsPath.getBucket());
+          if (bucket == null) {
+            collector.addFailure("Bucket does not exist.",
+                                 "Ensure you entered the correct bucket path.")
+              .withConfigProperty(NAME_PATH);
+          }
         } catch (IllegalArgumentException e) {
-          collector.addFailure(e.getMessage(), null).withConfigProperty(NAME_PATH).withStacktrace(e.getStackTrace());
+          collector.addFailure(e.getMessage(), null).withConfigProperty(NAME_PATH)
+            .withStacktrace(e.getStackTrace());
+        } catch (IOException e) {
+          collector.addFailure(e.getMessage(), null).withConfigProperty(NAME_SERVICE_ACCOUNT_FILE_PATH)
+            .withStacktrace(e.getStackTrace());
+        } catch (StorageException e) {
+          collector.addFailure(e.getMessage(), "Ensure you entered the correct bucket path.")
+            .withConfigProperty(NAME_PATH)
+            .withStacktrace(e.getStackTrace());
         }
       }
       if (!containsMacro(NAME_FILE_SYSTEM_PROPERTIES)) {
