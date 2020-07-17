@@ -361,22 +361,28 @@ public final class BigQuerySinkConfig extends AbstractBigQuerySinkConfig {
 
   private void validateOperationProperties(@Nullable Schema schema, FailureCollector collector) {
     Operation operation = getOperation();
-    if (Arrays.stream(Operation.values()).noneMatch(operation::equals)) {
-      collector.addFailure(
-        String.format("Operation has incorrect value '%s'.", operation),
-        "Set the operation to 'Insert', 'Update', or 'Upsert'.")
-        .withConfigElement(NAME_OPERATION, operation.name().toLowerCase());
-      return;
-    }
-    if (Operation.INSERT.equals(getOperation())) {
-      return;
-    }
-    if ((Operation.UPDATE.equals(getOperation()) || Operation.UPSERT.equals(getOperation()))
-      && getRelationTableKey() == null) {
-      collector.addFailure(
-        "Table key must be set if the operation is 'Update' or 'Upsert'.", null)
-        .withConfigProperty(NAME_TABLE_KEY).withConfigProperty(NAME_OPERATION);
-      return;
+    // If operation is a macro skip validation for it
+    if (!containsMacro(NAME_OPERATION)) {
+      if (Arrays.stream(Operation.values()).noneMatch(operation::equals)) {
+        collector.addFailure(
+          String.format("Operation has incorrect value '%s'.", operation),
+          "Set the operation to 'Insert', 'Update', or 'Upsert'.")
+          .withConfigElement(NAME_OPERATION, operation.name().toLowerCase());
+        return;
+      }
+      if (Operation.INSERT.equals(operation)) {
+        return;
+      }
+      // If relationTableKey is a macro skip validation for it
+      if (!containsMacro(NAME_TABLE_KEY)) {
+        if ((Operation.UPDATE.equals(operation) || Operation.UPSERT.equals(operation))
+          && getRelationTableKey() == null) {
+          collector.addFailure(
+            "Table key must be set if the operation is 'Update' or 'Upsert'.", null)
+            .withConfigProperty(NAME_TABLE_KEY).withConfigProperty(NAME_OPERATION);
+          return;
+        }
+      }
     }
 
     if (schema == null) {
